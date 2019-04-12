@@ -1,11 +1,16 @@
 package cn.exrick.common.task;
 
+import cn.exrick.bean.Ip;
 import cn.exrick.bean.Pay;
+import cn.exrick.common.utils.EmailUtils;
+import cn.exrick.common.utils.ShellUtils;
+import cn.exrick.dao.IpDao;
 import cn.exrick.dao.PayDao;
 import cn.exrick.service.PayService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -18,45 +23,82 @@ import java.util.List;
 @Component
 public class Jobs {
 
-    final static Logger log= LoggerFactory.getLogger(Jobs.class);
+	final static Logger log = LoggerFactory.getLogger(Jobs.class);
 
-    @Autowired
-    private PayService payService;
+	@Autowired
+	private PayService payService;
 
-    @Autowired
-    private PayDao payDao;
+	@Autowired
+	private PayDao payDao;
+	@Autowired
+	private IpDao ipDao;
+	@Autowired
+	private EmailUtils emailUtils;
+	@Value("${email.sender}")
+	private String EMAIL_SENDER;
 
-    /**
-     * 每日凌晨清空除捐赠和审核中以外的数据
-     */
-    @Scheduled(cron="0 0 0 * * ?")
-    public void cronJob(){
+	@Value("${email.receiver}")
+	private String EMAIL_RECEIVER;
 
-        List<Pay> list=payDao.getByStateIsNotAndStateIsNot(0,1);
-        for(Pay p:list){
-            try {
-                payService.delPay(p.getId());
-            }catch (Exception e){
-                log.error("定时删除数据"+p.getId()+"失败");
-                e.printStackTrace();
-            }
-        }
+	/**
+	 * 每日凌晨清空除捐赠和审核中以外的数据
+	 */
+	@Scheduled(cron = "0 0 0 * * ?")
+	public void cronJob() {
 
-        log.info("定时执行清空除捐赠和审核中的数据完毕");
+		List<Pay> list = payDao.getByStateIsNotAndStateIsNot(0, 1);
+		for (Pay p : list) {
+			try {
+				payService.delPay(p.getId());
+			} catch (Exception e) {
+				log.error("定时删除数据" + p.getId() + "失败");
+				e.printStackTrace();
+			}
+		}
 
-        //设置未审核数据为支付失败
-        List<Pay> list1=payDao.getByStateIs(0);
-        for(Pay p:list1){
-            p.setState(2);
-            p.setUpdateTime(new Date());
-            try {
-                payService.updatePay(p);
-            }catch (Exception e){
-                log.error("设置未审核数据"+p.getId()+"为支付失败");
-                e.printStackTrace();
-            }
-        }
+		log.info("定时执行清空除捐赠和审核中的数据完毕");
 
-        log.info("定时执行设置未审核数据为支付失败完毕");
-    }
+		// 设置未审核数据为支付失败
+		List<Pay> list1 = payDao.getByStateIs(0);
+		for (Pay p : list1) {
+			p.setState(2);
+			p.setUpdateTime(new Date());
+			try {
+				payService.updatePay(p);
+			} catch (Exception e) {
+				log.error("设置未审核数据" + p.getId() + "为支付失败");
+				e.printStackTrace();
+			}
+		}
+
+		log.info("定时执行设置未审核数据为支付失败完毕");
+	}
+
+	@Scheduled(cron = "0 0 7-23 * * ?")
+//	@Scheduled(cron = "0 */1 * * * ?")
+	public void checkIp() {
+		try {
+			String result = ShellUtils.execCmd("curl ifconfig.me", null).trim();
+			log.info("ip:{}",result);
+			Ip ip = ipDao.findOne("aaaa");
+			if (null == ip) {
+				ip = new Ip();
+				ip.setId("aaaa");
+				ip.setCreateTime(new Date());
+				ip.setIp(result);
+				ipDao.save(ip);
+			} else {
+				if (!ip.getIp().equals(result)) {
+					ip.setIp(result);
+					ipDao.save(ip);
+					emailUtils.sendTemplateMail(EMAIL_SENDER, EMAIL_RECEIVER, "【XPay个人收款支付系统】待审核处理", "email-ip",
+							ip);
+				}
+			}
+
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+
 }
